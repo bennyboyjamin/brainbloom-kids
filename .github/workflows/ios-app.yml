@@ -25,10 +25,10 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 60
     env:
-      BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
-      TEAM: ${{ secrets.APPLE_TEAM_ID }}
-      KEY_ID: ${{ secrets.ASC_KEY_ID }}
-      ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+      RAW_BUNDLE_ID: ${{ secrets.BUNDLE_ID }}
+      RAW_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+      RAW_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      RAW_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
       P8: ${{ secrets.ASC_KEY_P8 }}
       VER: ${{ inputs.version }}
       BUILD: ${{ github.run_number }}
@@ -38,11 +38,24 @@ jobs:
 
       - name: Check setup
         run: |
+          # Remove any spaces or line breaks pasted into the secrets by accident
+          clean() { printf '%s' "$1" | tr -d ' \t\r\n'; }
+          BUNDLE_ID=$(clean "$RAW_BUNDLE_ID"); TEAM=$(clean "$RAW_TEAM"); KEY_ID=$(clean "$RAW_KEY_ID"); ISSUER=$(clean "$RAW_ISSUER")
           missing=""
-          for v in BUNDLE_ID TEAM KEY_ID ISSUER P8; do [ -z "${!v}" ] && missing="$missing $v"; done
+          [ -z "$BUNDLE_ID" ] && missing="$missing BUNDLE_ID"
+          [ -z "$TEAM" ] && missing="$missing APPLE_TEAM_ID"
+          [ -z "$KEY_ID" ] && missing="$missing ASC_KEY_ID"
+          [ -z "$ISSUER" ] && missing="$missing ASC_ISSUER_ID"
+          [ -z "$P8" ] && missing="$missing ASC_KEY_P8"
           if [ -n "$missing" ]; then echo "::error::Missing secrets:$missing"; exit 1; fi
           for f in index.html app-icon.png app-splash.png; do [ -f "$f" ] || { echo "::error::$f is missing from the repo"; exit 1; }; done
           echo "Building BrainBloom Kids $VER (build $BUILD) for $BUNDLE_ID"
+          if ! printf '%s' "$BUNDLE_ID" | grep -Eq '^[A-Za-z][A-Za-z0-9-]*(\.[A-Za-z0-9-]+)+$'; then
+            echo "::error::BUNDLE_ID should look like com.yourname.brainbloomkids (letters, numbers, dots and dashes only)."; exit 1
+          fi
+          # Capacitor does not allow dashes in its own ID; the real bundle ID is set later in the Xcode project
+          CAP_ID=$(printf '%s' "$BUNDLE_ID" | tr '-' '_')
+          { echo "BUNDLE_ID=$BUNDLE_ID"; echo "TEAM=$TEAM"; echo "KEY_ID=$KEY_ID"; echo "ISSUER=$ISSUER"; echo "CAP_ID=$CAP_ID"; } >> "$GITHUB_ENV"
           echo "SIGN_DIR=$RUNNER_TEMP/sign" >> "$GITHUB_ENV"
 
       - name: Pick the newest Xcode
@@ -66,7 +79,7 @@ jobs:
            "devDependencies":{"@capacitor/cli":"^7.0.0"}}
           EOF
           cat > capacitor.config.json <<EOF
-          {"appId":"$BUNDLE_ID","appName":"BrainBloom Kids","webDir":"www",
+          {"appId":"$CAP_ID","appName":"BrainBloom Kids","webDir":"www",
            "ios":{"contentInset":"never","backgroundColor":"#B9E5FF","scrollEnabled":false}}
           EOF
           npm install --no-audit --no-fund
